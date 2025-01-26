@@ -1,52 +1,45 @@
-name: Deploy to Azure Web App
+
+name: CI/CD Pipeline for GCP Cloud Run
 
 on:
   push:
     branches:
-      - main
+      - main # Triggers the workflow on push to the main branch
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
 
-    env:
-      AZURE_WEBAPP_NAME: ${{ secrets.WEBAPP_NAME }}
-      AZURE_PLAN: ${{ secrets.AZURE_PLAN }}
-      AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
-      ACR_NAME: ${{ secrets.ACR_NAME }}
-
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
+      # Step 1: Check out the code
+      - name: Checkout Code
+        uses: actions/checkout@v3
 
-    - name: Log in to Azure using Service Principal
-      uses: azure/login@v1
-      with:
-        creds: ${{ secrets.AZURE_CREDENTIALS }}
+      # Step 2: Authenticate with GCP
+      - name: Authenticate with GCP
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
 
-    - name: Log in to Azure Container Registry (ACR)
-      run: |
-        az acr login --name $ACR_NAME
+      # Step 3: Set GCP Project and Region
+      - name: Configure GCP
+        run: |
+          gcloud config set project ${{ secrets.GCP_PROJECT_ID }}
+          gcloud config set run/region us-central1 # Change region if needed
 
-    - name: Build and tag Docker image
-      run: |
-        docker build -t $ACR_NAME.azurecr.io/fastapi-app:latest .
+      # Step 4: Build and Push Docker Image to Artifact Registry
+      - name: Build and Push Docker Image
+        run: |
+          IMAGE_NAME=us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/cloud-run-repo/my-app:latest
+          gcloud auth configure-docker us-central1-docker.pkg.dev
+          docker build -t $IMAGE_NAME .
+          docker push $IMAGE_NAME
 
-    - name: Push Docker image to ACR
-      run: |
-        docker push $ACR_NAME.azurecr.io/fastapi-app:latest
-
-    - name: Create or update Azure Web App with the ACR image
-      run: |
-        az webapp create --name $AZURE_WEBAPP_NAME \
-                         --resource-group $AZURE_RESOURCE_GROUP \
-                         --plan $AZURE_PLAN \
-                         --deployment-container-image-name $ACR_NAME.azurecr.io/fastapi-app:latest || \
-        az webapp config container set --name $AZURE_WEBAPP_NAME \
-                                       --resource-group $AZURE_RESOURCE_GROUP \
-                                       --docker-custom-image-name $ACR_NAME.azurecr.io/fastapi-app:latest \
-                                       --docker-registry-server-url https://$ACR_NAME.azurecr.io
-
-    - name: Restart Azure Web App
-      run: |
-        az webapp restart --name $AZURE_WEBAPP_NAME --resource-group $AZURE_RESOURCE_GROUP
+      # Step 5: Deploy to Cloud Run
+      - name: Deploy to Cloud Run
+        run: |
+          IMAGE_NAME=us-central1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/cloud-run-repo/my-app:latest
+          gcloud run deploy my-cloud-run-service \
+            --image $IMAGE_NAME \
+            --platform managed \
+            --allow-unauthenticated
