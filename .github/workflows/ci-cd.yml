@@ -1,4 +1,4 @@
-name: Deploy to Google Cloud Run
+name: Deploy to Azure Web App
 
 on:
   push:
@@ -10,39 +10,43 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-      REGION: ${{ secrets.GCP_REGION }}
-      SERVICE_NAME: ${{ secrets.GCP_SERVICE_NAME }}
+      AZURE_WEBAPP_NAME: ${{ secrets.WEBAPP_NAME }}
+      AZURE_PLAN: ${{ secrets.AZURE_PLAN }}
+      AZURE_RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
+      ACR_NAME: ${{ secrets.ACR_NAME }}
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v3
 
-    - name: Set up Google Cloud SDK
-      uses: google-github-actions/setup-gcloud@v1
+    - name: Log in to Azure using Service Principal
+      uses: azure/login@v1
       with:
-        project_id: ${{ secrets.GCP_PROJECT_ID }}
-        service_account_key: ${{ secrets.GCP_SA_KEY }}
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-    - name: Authenticate Docker with GCP
-      run: gcloud auth configure-docker
+    - name: Log in to Azure Container Registry (ACR)
+      run: |
+        az acr login --name $ACR_NAME
 
     - name: Build and tag Docker image
       run: |
-        docker build -t gcr.io/$PROJECT_ID/fastapi-app:latest .
+        docker build -t $ACR_NAME.azurecr.io/fastapi-app:latest .
 
-    - name: Push Docker image to GCR
+    - name: Push Docker image to ACR
       run: |
-        docker push gcr.io/$PROJECT_ID/fastapi-app:latest
+        docker push $ACR_NAME.azurecr.io/fastapi-app:latest
 
-    - name: Deploy to Google Cloud Run
+    - name: Create or update Azure Web App with the ACR image
       run: |
-        gcloud run deploy $SERVICE_NAME \
-          --image gcr.io/$PROJECT_ID/fastapi-app:latest \
-          --region $REGION \
-          --platform managed \
-          --allow-unauthenticated
+        az webapp create --name $AZURE_WEBAPP_NAME \
+                         --resource-group $AZURE_RESOURCE_GROUP \
+                         --plan $AZURE_PLAN \
+                         --deployment-container-image-name $ACR_NAME.azurecr.io/fastapi-app:latest || \
+        az webapp config container set --name $AZURE_WEBAPP_NAME \
+                                       --resource-group $AZURE_RESOURCE_GROUP \
+                                       --docker-custom-image-name $ACR_NAME.azurecr.io/fastapi-app:latest \
+                                       --docker-registry-server-url https://$ACR_NAME.azurecr.io
 
-    - name: Verify Deployment
+    - name: Restart Azure Web App
       run: |
-        gcloud run services describe $SERVICE_NAME --region $REGION
+        az webapp restart --name $AZURE_WEBAPP_NAME --resource-group $AZURE_RESOURCE_GROUP
